@@ -5,12 +5,21 @@
  */
 package soundbiteapp;
 
+import java.io.File;
+import java.util.concurrent.Callable;
+
 /**
  *
  * @author ptb
+ * 
+ * Uses callable for the ExecutorService
  */
-public interface ISoundThread extends Runnable {
+public interface ISoundThread extends Callable {
     
+    public boolean isRunning();
+        
     public void kill();
+    
+    public File getWavFile();
     
 }

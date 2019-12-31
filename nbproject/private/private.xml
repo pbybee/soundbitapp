@@ -5,6 +5,8 @@
         <group>
             <file>file:/home/ptb/java/PrimeTestApp/PrimeTestApp/src/soundbiteapp/SoundBiteUI.java</file>
             <file>file:/home/ptb/java/PrimeTestApp/PrimeTestApp/src/soundbiteapp/RecordSoundTask.java</file>
+            <file>file:/home/ptb/java/PrimeTestApp/PrimeTestApp/src/soundbiteapp/ISoundThread.java</file>
+            <file>file:/home/ptb/java/PrimeTestApp/PrimeTestApp/src/soundbiteapp/PlaySoundTask.java</file>
         </group>
     </open-files>
 </project-private>

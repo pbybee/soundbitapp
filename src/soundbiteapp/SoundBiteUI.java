@@ -5,9 +5,20 @@
  */
 package soundbiteapp;
 
+import java.io.File;
+import static java.lang.Thread.sleep;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.sound.sampled.Clip;
+import javax.swing.table.DefaultTableModel;
 
 /**
  *
@@ -18,13 +29,19 @@ import java.util.regex.Pattern;
  */
 public class SoundBiteUI extends javax.swing.JFrame {
     
-    private boolean isRecording = false;
     
-    ArrayList<String> wavFiles = new ArrayList<String>();
-    ArrayList<ISoundThread> threadList = new ArrayList<ISoundThread>();
+    private ExecutorService executorService;
+    
+    //Table model to add rows
+    private DefaultTableModel dtm;
+    
+    //To keep track of wavFiles and Threads
+    HashMap<String, File> wavFileMap = new HashMap<>();
+    ArrayList<ISoundThread> threadList = new ArrayList<>();
+
     
     //Only have a single recordTask to referece
-    ISoundThread recordTask;
+    ISoundThread recordTask = null;
     
     String fileNameRegex = "^[a-zA-Z0-9]+$";
     Pattern pattern = Pattern.compile(fileNameRegex);
@@ -34,7 +51,11 @@ public class SoundBiteUI extends javax.swing.JFrame {
      */
     public SoundBiteUI() {
         initComponents();
+        
+        executorService = Executors.newFixedThreadPool(10);
+        
         jLabel2.setVisible(false);
+        dtm = (DefaultTableModel) this.jTable1.getModel();
     }
 
     /**
@@ -54,22 +75,20 @@ public class SoundBiteUI extends javax.swing.JFrame {
         jButton2 = new javax.swing.JButton();
         jButton3 = new javax.swing.JButton();
         jLabel2 = new javax.swing.JLabel();
+        jLabel3 = new javax.swing.JLabel();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
 
         jTable1.setModel(new javax.swing.table.DefaultTableModel(
             new Object [][] {
-                {null, null, null},
-                {null, null, null},
-                {null, null, null},
-                {null, null, null}
+
             },
             new String [] {
-                "Clip Name", "Length", "Play?"
+                "Clip Name", "Play?"
             }
         ) {
             Class[] types = new Class [] {
-                java.lang.String.class, java.lang.String.class, java.lang.Boolean.class
+                java.lang.String.class, java.lang.Boolean.class
             };
 
             public Class getColumnClass(int columnIndex) {
@@ -103,6 +122,8 @@ public class SoundBiteUI extends javax.swing.JFrame {
 
         jLabel2.setText("Enter a name");
 
+        jLabel3.setText("Play up to 10 clips at once");
+
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
         getContentPane().setLayout(layout);
         layout.setHorizontalGroup(
@@ -116,13 +137,13 @@ public class SoundBiteUI extends javax.swing.JFrame {
                             .addGroup(layout.createSequentialGroup()
                                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                                     .addGroup(layout.createSequentialGroup()
-                                        .addComponent(jLabel1)
-                                        .addGap(84, 84, 84)
-                                        .addComponent(jLabel2, javax.swing.GroupLayout.PREFERRED_SIZE, 106, javax.swing.GroupLayout.PREFERRED_SIZE))
-                                    .addGroup(layout.createSequentialGroup()
                                         .addComponent(jTextField1, javax.swing.GroupLayout.PREFERRED_SIZE, 339, javax.swing.GroupLayout.PREFERRED_SIZE)
                                         .addGap(18, 18, 18)
-                                        .addComponent(jButton1, javax.swing.GroupLayout.PREFERRED_SIZE, 199, javax.swing.GroupLayout.PREFERRED_SIZE)))
+                                        .addComponent(jButton1, javax.swing.GroupLayout.PREFERRED_SIZE, 199, javax.swing.GroupLayout.PREFERRED_SIZE))
+                                    .addGroup(layout.createSequentialGroup()
+                                        .addComponent(jLabel1)
+                                        .addGap(84, 84, 84)
+                                        .addComponent(jLabel2, javax.swing.GroupLayout.PREFERRED_SIZE, 106, javax.swing.GroupLayout.PREFERRED_SIZE)))
                                 .addGap(0, 0, Short.MAX_VALUE)))
                         .addContainerGap())
                     .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, layout.createSequentialGroup()
@@ -130,12 +151,17 @@ public class SoundBiteUI extends javax.swing.JFrame {
                         .addComponent(jButton3)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                         .addComponent(jButton2, javax.swing.GroupLayout.PREFERRED_SIZE, 132, javax.swing.GroupLayout.PREFERRED_SIZE)
-                        .addGap(45, 45, 45))))
+                        .addGap(45, 45, 45))
+                    .addGroup(layout.createSequentialGroup()
+                        .addComponent(jLabel3)
+                        .addGap(0, 0, Short.MAX_VALUE))))
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(layout.createSequentialGroup()
-                .addContainerGap(35, Short.MAX_VALUE)
+                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                .addComponent(jLabel3)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                     .addComponent(jLabel1)
                     .addComponent(jLabel2))
@@ -157,42 +183,115 @@ public class SoundBiteUI extends javax.swing.JFrame {
 
     private void jButton1ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButton1ActionPerformed
         // RECORD BUTTON
-        
-        //Check that the filename is only alphanumeric for simplicity
-        Matcher matcher = pattern.matcher(jTextField1.getText());
-        if (!matcher.matches()) {
-            jLabel2.setVisible(true);
-            return;
-        } else {
-            jLabel2.setVisible(false);
-        }
-        
-        //Change label to stop if the button was clicked on isRecording = false
-        if (!this.isRecording) {
-            this.recordTask = new RecordSoundTask(jLabel2.getText());
-            this.threadList.add(recordTask);
+        //This check could be for if the record thread is running as well.
+        if (this.recordTask == null || !this.recordTask.isRunning()){
+            //Check that the filename is only alphanumeric for simplicity
+            String fileName = jTextField1.getText();
+            Matcher matcher = pattern.matcher(fileName);
+            if (!matcher.matches()) {
+                //Display hint and return without action
+                jLabel2.setVisible(true);
+                return;
+            } else {
+                jLabel2.setVisible(false);
+            }
             
+            
+            //Change label to stop if the button was clicked on isRecording = false
+            this.recordTask = new RecordSoundTask(fileName);
+            this.threadList.add(this.recordTask);
+            
+            //RecordFuture never used
+            Future recordFuture = this.executorService.submit(this.recordTask);
+                        
             jButton1.setText("Stop Record");
+            
         } else {
+            
+            
+            //Get the wavFileName and add it to the table
+            File wavFile = this.recordTask.getWavFile();
+            this.wavFileMap.put(wavFile.getName(),
+                                wavFile);
+            
+            System.out.println(wavFile.getAbsolutePath());
+            
+            this.dtm.addRow(new Object[] {wavFile.getName(), false});
+            
             //Remove the record task from thread list and kill it
             this.threadList.remove(this.recordTask);
             this.recordTask.kill();
-            
+                        
             //Set the button back to record
             jButton1.setText("Record");
+            jTextField1.setText("");
         }
         
     }//GEN-LAST:event_jButton1ActionPerformed
-
+    
+    //This is blocking so the Stop All Activity button is not necessary
     private void jButton3ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButton3ActionPerformed
-        // Play Selected Clips Button
+        try {
+
+            // Play Selected Clips Button
+
+            // Don't allow when recording :(
+            if (!this.recordTask.isRunning()) {
+
+                int numRows = jTable1.getModel().getRowCount();
+                ArrayList<Clip> clipList = new ArrayList<>();
+
+                for (int i=0; i<numRows; i++) {
+                    boolean active = (boolean) this.dtm.getValueAt(i, 1);
+                    if (active) {
+                        String wavFileName = (String) this.dtm.getValueAt(i, 0);
+                        System.out.println(wavFileName);
+                        
+                        File wavFile = wavFileMap.get(wavFileName);
+                        
+                        //Not the prettiest way to do this
+                        //I'm making the task, submitting it to the executor service
+                        //then getting the AudioClip object back from the callable
+                        PlaySoundTask play = new PlaySoundTask(wavFile);
+                        this.threadList.add(play);
+                        Future clipFuture = executorService.submit(play);
+                        Clip clip = (Clip)clipFuture.get();
+                        System.out.println(clip.toString());
+                        clipList.add(clip);
+                    }
+                }
+
+                //While loop to wait until all clips are finished plaing
+                boolean allFinished = false;
+                while (!allFinished) {
+                    allFinished = true;
+                    for (Clip clip : clipList) {
+                        System.out.println(String.format("Clip %s is Running? %s",clip.toString(),clip.isRunning()));
+                        if (clip.isRunning()) {
+                            allFinished = false;
+                        } else {
+                            clip.close();
+                        }
+                    }
+                    sleep(50);
+                }
+                this.threadList.clear();
+            }
+        } catch (ExecutionException | InterruptedException ex) {
+            ex.printStackTrace();
+        }
     }//GEN-LAST:event_jButton3ActionPerformed
 
+    //Since I added this before making the Play All button, I thought I'd kick
+    //Off playback in another thread, but since the playbck is blocking i'll 
+    //just keep this here
     private void jButton2ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButton2ActionPerformed
         // Stop All activity BUTTON
         for (ISoundThread th : this.threadList) {
             th.kill();
         }
+        
+        jButton1.setText("Record");
     }//GEN-LAST:event_jButton2ActionPerformed
 
     /**
@@ -236,6 +335,7 @@ public class SoundBiteUI extends javax.swing.JFrame {
     private javax.swing.JButton jButton3;
     private javax.swing.JLabel jLabel1;
     private javax.swing.JLabel jLabel2;
+    private javax.swing.JLabel jLabel3;
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JTable jTable1;
     private javax.swing.JTextField jTextField1;
